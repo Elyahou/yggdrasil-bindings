@@ -197,12 +197,15 @@ class UnleashEngine:
         This records the evaluation against the engine's metrics, so the toggle
         shows up in the next `get_metrics()` payload.
 
-        `fallback_function` is consulted only when the engine does not know the
-        toggle; its answer sets `is_enabled` but leaves `is_found` at `False`.
+        `fallback_function` is consulted when the engine does not know the
+        toggle or fails to evaluate it; its answer sets `is_enabled` but leaves
+        `is_found` at `False`.
 
         Never raises, and answers all or nothing: whatever fails, the caller
-        gets the disabled toggle rather than a half built answer.
+        gets the fallback's answer, or the disabled toggle when there is no
+        fallback or the fallback itself fails, rather than a half built answer.
         """
+        fallback_called = False
         try:
             custom_strategy_results = (
                 self.custom_strategy_handler.evaluate_custom_strategies(
@@ -215,6 +218,7 @@ class UnleashEngine:
             is_found = enabled is not None
             if not is_found:
                 if fallback_function is not None:
+                    fallback_called = True
                     enabled = bool(fallback_function(toggle_name, context))
                 ## The native engine only records toggles it knows, so record
                 ## this one with the answer settled on
@@ -227,6 +231,19 @@ class UnleashEngine:
             )
         except Exception:
             result = FeatureToggle(name=toggle_name)
+            ## A fallback that already raised above is not asked again
+            if fallback_function is not None and not fallback_called:
+                try:
+                    result = FeatureToggle(
+                        name=toggle_name,
+                        is_enabled=bool(fallback_function(toggle_name, context)),
+                    )
+                except Exception:
+                    _logger.warning(
+                        "Fallback function failed for toggle %s",
+                        toggle_name,
+                        exc_info=True,
+                    )
             _logger.warning(
                 "Failed to evaluate toggle %s, returning %s",
                 toggle_name,
