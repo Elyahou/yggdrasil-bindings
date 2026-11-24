@@ -205,20 +205,31 @@ class UnleashEngine:
         gets the fallback's answer, or the disabled toggle when there is no
         fallback or the fallback itself fails, rather than a half built answer.
         """
-        fallback_called = False
         try:
-            custom_strategy_results = (
-                self.custom_strategy_handler.evaluate_custom_strategies(
-                    toggle_name, context
+            try:
+                custom_strategy_results = (
+                    self.custom_strategy_handler.evaluate_custom_strategies(
+                        toggle_name, context
+                    )
                 )
-            )
-            enabled, impression = self._native.is_enabled(
-                toggle_name, context or {}, custom_strategy_results
-            )
+                enabled, impression = self._native.is_enabled(
+                    toggle_name, context or {}, custom_strategy_results
+                )
+            except Exception:
+                is_enabled = False
+                if fallback_function is not None:
+                    is_enabled = bool(fallback_function(toggle_name, context))
+                result = FeatureToggle(name=toggle_name, is_enabled=is_enabled)
+                _logger.warning(
+                    "Failed to evaluate toggle %s, returning %s",
+                    toggle_name,
+                    result,
+                    exc_info=True,
+                )
+                return result
             is_found = enabled is not None
             if not is_found:
                 if fallback_function is not None:
-                    fallback_called = True
                     enabled = bool(fallback_function(toggle_name, context))
                 ## The native engine only records toggles it knows, so record
                 ## this one with the answer settled on
@@ -231,19 +242,6 @@ class UnleashEngine:
             )
         except Exception:
             result = FeatureToggle(name=toggle_name)
-            ## A fallback that already raised above is not asked again
-            if fallback_function is not None and not fallback_called:
-                try:
-                    result = FeatureToggle(
-                        name=toggle_name,
-                        is_enabled=bool(fallback_function(toggle_name, context)),
-                    )
-                except Exception:
-                    _logger.warning(
-                        "Fallback function failed for toggle %s",
-                        toggle_name,
-                        exc_info=True,
-                    )
             _logger.warning(
                 "Failed to evaluate toggle %s, returning %s",
                 toggle_name,
